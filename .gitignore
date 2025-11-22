@@ -1,0 +1,35 @@
+# Compiled binaries
+client
+server
+demo
+myshell
+hello
+
+# Object files
+*.o
+
+# Test output files
+*.log
+*.txt
+input
+output
+
+# Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts
+*.a
+*.so
+
+# Temporary files
+*.tmp
+*.bak
+
+# Test logs
+server_scenario*.log
+client*_scenario*.log
