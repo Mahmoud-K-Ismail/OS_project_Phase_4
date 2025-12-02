@@ -110,16 +110,3 @@ OS_Project_Phase_4/
 ├── README.md
 └── tests/
 ```
-
-## Troubleshooting & Notes
-
-- The ready queue holds up to 512 pending tasks. If it fills up, clients receive a retry message without crashing the server.
-- The server ignores `SIGPIPE`, so a client that disconnects abruptly simply causes its tasks to be cancelled and cleaned up.
-- `demo`/`program` jobs are capped at `MAX_SIMULATED_BURST = 120` to keep demos reasonable. This limit is configurable at the top of `server.c`.
-- The underlying Phase 1 shell implementation remains untouched, so regression tests from previous phases still pass.
-- A rolling summary is printed every time the queue becomes empty: `[SUMMARY] Completed X/Y tasks (shell=A, program=B)` which mirrors the grading screenshots.
-
-## Next Steps
-
-- Record the demo video showcasing the three required scenarios.
-- Update the written report (see `docs/Phase4_Report.md`) with the architecture, implementation highlights, testing evidence, challenges, and division of labor.

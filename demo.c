@@ -15,7 +15,10 @@ int main(int argc, char* argv[]) {
     }
 
     for (int i = 1; i <= seconds; ++i) {
-        printf("[demo] iteration %d/%d\n", i, seconds);
+        // printf("[demo] iteration %d/%d\n", i, seconds);
+
+        // to match expected output format
+        printf("Demo %d/%d\n", i, seconds);
         fflush(stdout);
         sleep(1);
     }
