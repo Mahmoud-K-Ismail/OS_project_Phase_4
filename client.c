@@ -14,6 +14,7 @@
 // system headers
 #include <errno.h>       // errno for error handling
 #include <fcntl.h>
+#include <sys/time.h>
 
 // CLIENT configuration constants (must match server protocol)
 #define PORT 8080                 // server port (must match server)
