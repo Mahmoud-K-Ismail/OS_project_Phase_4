@@ -438,10 +438,9 @@ static scheduler_task_t* select_next_task(int last_task_id) {
     scheduler_task_t* best = NULL;
     int best_index = -1;
     
-    // First pass: Find shell commands (highest priority, execute immediately)
     for (size_t i = 0; i < g_queue.count; ++i) {
         scheduler_task_t* candidate = g_queue.tasks[i];
-        if (candidate->type == TASK_SHELL_COMMAND && !candidate->cancelled) {
+        if (candidate->type == TASK_SHELL_COMMAND) {
             if (best == NULL || candidate->arrival_seq < best->arrival_seq) {
                 best = candidate;
                 best_index = (int)i;
@@ -449,49 +448,24 @@ static scheduler_task_t* select_next_task(int last_task_id) {
         }
     }
     
-    // If no shell command, find the task with shortest remaining time (SJRF)
-    // When remaining times are equal or very close (within 2), prioritize by total_burst_time
-    // to ensure shorter total jobs complete first
     if (best == NULL) {
         for (size_t i = 0; i < g_queue.count; ++i) {
             scheduler_task_t* candidate = g_queue.tasks[i];
-            if (candidate->cancelled) {
-                continue;
-            }
-            if (best == NULL) {
+            if (best == NULL || candidate->remaining_time < best->remaining_time ||
+                (candidate->remaining_time == best->remaining_time && candidate->arrival_seq < best->arrival_seq)) {
                 best = candidate;
                 best_index = (int)i;
-            } else {
-                int remaining_diff = candidate->remaining_time - best->remaining_time;
-                // If remaining times are very close (within 2), prioritize by total_burst_time
-                if (abs(remaining_diff) <= 2 && candidate->total_burst_time > 0 && best->total_burst_time > 0) {
-                    // Prefer the one with smaller total_burst_time (shorter total job)
-                    if (candidate->total_burst_time < best->total_burst_time ||
-                        (candidate->total_burst_time == best->total_burst_time && 
-                         candidate->arrival_seq < best->arrival_seq)) {
-                        best = candidate;
-                        best_index = (int)i;
-                    }
-                } else if (candidate->remaining_time < best->remaining_time ||
-                    (candidate->remaining_time == best->remaining_time && 
-                     candidate->arrival_seq < best->arrival_seq)) {
-                    best = candidate;
-                    best_index = (int)i;
-                }
             }
         }
     }
     
-    // If the selected task is the same as the last one, and there are other tasks,
-    // find the second-best task to avoid consecutive runs
     if (best != NULL && best->task_id == last_task_id && g_queue.count > 1) {
         scheduler_task_t* second = NULL;
         int second_index = -1;
         
-        // First check for shell commands
         for (size_t i = 0; i < g_queue.count; ++i) {
             scheduler_task_t* candidate = g_queue.tasks[i];
-            if (candidate->task_id == last_task_id || candidate->cancelled) {
+            if (candidate->task_id == last_task_id) {
                 continue;
             }
             if (candidate->type == TASK_SHELL_COMMAND) {
@@ -502,34 +476,16 @@ static scheduler_task_t* select_next_task(int last_task_id) {
             }
         }
         
-        // If no shell command, find the task with shortest remaining time
-        // When remaining times are equal or very close (within 2), prioritize by total_burst_time
         if (second == NULL) {
             for (size_t i = 0; i < g_queue.count; ++i) {
                 scheduler_task_t* candidate = g_queue.tasks[i];
-                if (candidate->task_id == last_task_id || candidate->cancelled) {
+                if (candidate->task_id == last_task_id) {
                     continue;
                 }
-                if (second == NULL) {
+                if (second == NULL || candidate->remaining_time < second->remaining_time ||
+                    (candidate->remaining_time == second->remaining_time && candidate->arrival_seq < second->arrival_seq)) {
                     second = candidate;
                     second_index = (int)i;
-                } else {
-                    int remaining_diff = candidate->remaining_time - second->remaining_time;
-                    // If remaining times are very close (within 2), prioritize by total_burst_time
-                    if (abs(remaining_diff) <= 2 && candidate->total_burst_time > 0 && second->total_burst_time > 0) {
-                        // Prefer the one with smaller total_burst_time (shorter total job)
-                        if (candidate->total_burst_time < second->total_burst_time ||
-                            (candidate->total_burst_time == second->total_burst_time && 
-                             candidate->arrival_seq < second->arrival_seq)) {
-                            second = candidate;
-                            second_index = (int)i;
-                        }
-                    } else if (candidate->remaining_time < second->remaining_time ||
-                        (candidate->remaining_time == second->remaining_time && 
-                         candidate->arrival_seq < second->arrival_seq)) {
-                        second = candidate;
-                        second_index = (int)i;
-                    }
                 }
             }
         }
@@ -544,7 +500,6 @@ static scheduler_task_t* select_next_task(int last_task_id) {
         return NULL;
     }
     
-    // Remove the selected task from the queue
     g_queue.count--;
     for (size_t i = (size_t)best_index; i < g_queue.count; ++i) {
         g_queue.tasks[i] = g_queue.tasks[i + 1];
