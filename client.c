@@ -5,6 +5,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 // Standard C library headers
+#include <stdbool.h>     // bool type
 #include <stdio.h>       // printf(), fprintf(), fgets(), etc.
 #include <stdlib.h>      // EXIT_SUCCESS, EXIT_FAILURE, atoi()
 #include <string.h>      // strncmp(), strlen(), strstr(), memset()
@@ -19,7 +20,7 @@
 #include <sys/time.h>    // struct timeval for socket timeouts
 
 // Client configuration constants (must match server protocol)
-#define PORT 8080                 // Server port number (must match server)
+#define PORT 8081                 // Server port number (must match server)
 #define BUFFER_SIZE 4096          // Buffer size for send/receive operations (must match server)
 #define SERVER_IP "127.0.0.1"     // Default server IP address (localhost)
 
@@ -43,7 +44,7 @@ void print_connection_lost_error(void);
 int main(int argc, char* argv[]) {
     // Parse command line arguments for server IP and port (optional)
     const char* server_ip = SERVER_IP;  // Default to localhost
-    int port = PORT;                      // Default to 8080
+    int port = PORT;                      // Default to 8081
     
     // Allow user to specify server IP and port as command line arguments
     // Usage: ./client [server_ip] [port]
@@ -131,6 +132,7 @@ void run_client_loop(int socket_fd) {
     char response[BUFFER_SIZE];   // Buffer for server response
     ssize_t bytes_received;
     int pending_commands = 0;     // Track how many commands we're waiting for completion
+    int pending_shell_commands = 0;  // Track how many shell commands are pending (don't send <<END>>)
     
     // main command loop - runs indefinitely until exit or disconnect
     while (1) {
@@ -167,12 +169,20 @@ void run_client_loop(int socket_fd) {
                 break;
             }
             
+            // Determine if this is a program command (demo/program) or shell command
+            bool is_program_command = (strncmp(command, "./demo", 6) == 0 || 
+                                       strncmp(command, "demo", 4) == 0 ||
+                                       strncmp(command, "program", 7) == 0);
+            
             // Increment pending commands counter
             pending_commands++;
+            if (!is_program_command) {
+                pending_shell_commands++;  // Track shell commands separately
+            }
             
             // Set up timeout for receiving data based on command type
             struct timeval tv;
-            if (strncmp(command, "./demo", 6) == 0 || strncmp(command, "demo", 4) == 0) {
+            if (is_program_command) {
                 // Demo/program commands: 30 seconds timeout (handles scheduling delays)
                 tv.tv_sec = 30;
                 tv.tv_usec = 0;
@@ -203,7 +213,7 @@ void run_client_loop(int socket_fd) {
                         printf("%s", response);
                         fflush(stdout);  // Flush immediately
                     }
-                    // One command completed
+                    // One command completed (program command)
                     pending_commands--;
                 } else {
                     // Normal output, display it
@@ -218,10 +228,14 @@ void run_client_loop(int socket_fd) {
                 // Error occurred during receive
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     // Timeout - no more data for now
-                    // If we have pending commands, continue the loop to check for user input
-                    // Otherwise, break to allow new command input
-                    if (pending_commands > 0) {
-                        // Reset timeout and continue loop to check for user input
+                    // For shell commands, if we got a timeout after receiving output,
+                    // assume the command is complete (shell commands don't send <<END>>)
+                    if (pending_shell_commands > 0) {
+                        // Shell command completed (timeout after output means done)
+                        pending_shell_commands--;
+                        pending_commands--;
+                    } else if (pending_commands > 0) {
+                        // Program command still pending - reset timeout and continue
                         struct timeval tv;
                         tv.tv_sec = 30;
                         tv.tv_usec = 0;
@@ -239,6 +253,7 @@ void run_client_loop(int socket_fd) {
         
         // Clear timeout when no pending commands
         if (pending_commands == 0) {
+            pending_shell_commands = 0;  // Reset shell command counter
             struct timeval tv;
             tv.tv_sec = 0;
             tv.tv_usec = 0;

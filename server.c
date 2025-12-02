@@ -29,7 +29,7 @@
 #include "shell_utils.h"
 
 // Server configuration constants
-#define PORT 8080                    // TCP port number for server to listen on
+#define PORT 8081                    // TCP port number for server to listen on
 #define BUFFER_SIZE 4096             // Buffer size for network I/O and command storage
 #define BACKLOG 16                   // Maximum number of pending connections in queue
 #define MAX_TASKS 512                // Maximum number of tasks in scheduler queue
@@ -407,6 +407,11 @@ static void handle_client_commands(client_context_t* client) {
         
         // Parse command and create task structure
         char error_buf[128] = {0};
+        // Check if this looks like a program command (demo or program) before parsing
+        bool is_program_command = (strncmp(buffer, "./demo", 6) == 0 || 
+                                   strncmp(buffer, "demo", 4) == 0 ||
+                                   strncmp(buffer, "program", 7) == 0);
+        
         scheduler_task_t* task = create_task_from_command(buffer, client, error_buf, sizeof(error_buf));
         if (task == NULL) {
             // Task creation failed - send error message to client
@@ -414,6 +419,12 @@ static void handle_client_commands(client_context_t* client) {
                 strncpy(error_buf, "Error: Failed to allocate task\n", sizeof(error_buf) - 1);
             }
             send_string(client, error_buf);
+            
+            // If this was a program command that failed validation, send <<END>> marker
+            // so client knows the command is complete
+            if (is_program_command) {
+                send_string(client, "<<END>>\n");
+            }
             continue;
         }
         
@@ -459,10 +470,29 @@ static scheduler_task_t* create_task_from_command(const char* command, client_co
     
     // Try to parse as program task (demo or generic program)
     bool parsed_program = false;
+    bool had_validation_error = false;
+    
     if (try_parse_demo_request(command, task, error_buf, error_size)) {
         parsed_program = true;
-    } else if (try_parse_program_keyword(command, task, error_buf, error_size)) {
-        parsed_program = true;
+    } else {
+        // Check if parsing failed due to validation error (error_buf has content)
+        if (strlen(error_buf) > 0) {
+            // Parsing matched format but validation failed - return NULL to signal error
+            had_validation_error = true;
+        } else if (try_parse_program_keyword(command, task, error_buf, error_size)) {
+            parsed_program = true;
+        } else {
+            // Check if program keyword parsing also had a validation error
+            if (strlen(error_buf) > 0) {
+                had_validation_error = true;
+            }
+        }
+    }
+    
+    // If parsing failed with a validation error, clean up and return NULL
+    if (had_validation_error) {
+        free(task);
+        return NULL;  // error_buf already contains the error message
     }
     
     // If not a program task, treat as shell command
