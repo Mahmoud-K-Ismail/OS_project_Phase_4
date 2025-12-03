@@ -127,120 +127,276 @@ int create_and_connect_socket(const char* server_ip, int port) {
 // Handles asynchronous command execution by tracking pending commands
 // Parameters:
 //   socket_fd - Socket file descriptor for server connection
+// void run_client_loop(int socket_fd) {
+//     char command[BUFFER_SIZE];    // Buffer for user input
+//     char response[BUFFER_SIZE];   // Buffer for server response
+//     ssize_t bytes_received;
+//     int pending_commands = 0;     // Track how many commands we're waiting for completion
+//     int pending_shell_commands = 0;  // Track how many shell commands are pending (don't send <<END>>)
+    
+//     // main command loop - runs indefinitely until exit or disconnect
+//     while (1) {
+//         // Only prompt for input if we don't have pending commands
+//         // If we have pending commands, continue receiving their output
+//         if (pending_commands == 0) {
+//             // display shell prompt - CHANGED TO >>> to match assignment
+//             printf(">>> ");
+//             fflush(stdout);
+            
+//             // read command from user input
+//             if (fgets(command, sizeof(command), stdin) == NULL) {
+//                 const char* exit_cmd = "exit\n";
+//                 send(socket_fd, exit_cmd, strlen(exit_cmd), 0);
+//                 break;
+//             }
+            
+//             // check if command is empty or only whitespace
+//             if (is_empty_or_whitespace(command)) {
+//                 continue;
+//             }
+            
+//             // send command to server
+//             ssize_t bytes_sent = send(socket_fd, command, strlen(command), 0);
+//             if (bytes_sent == -1) {
+//                 perror("Error: Failed to send command to server");
+//                 print_connection_lost_error();
+//                 break;
+//             }
+            
+//             // check if user wants to exit
+//             if (strncmp(command, "exit", 4) == 0) {
+//                 recv(socket_fd, response, sizeof(response) - 1, 0);
+//                 break;
+//             }
+            
+//             // Determine if this is a program command (demo/program) or shell command
+//             bool is_program_command = (strncmp(command, "./demo", 6) == 0 || 
+//                                        strncmp(command, "demo", 4) == 0 ||
+//                                        strncmp(command, "program", 7) == 0);
+            
+//             // Increment pending commands counter
+//             pending_commands++;
+//             if (!is_program_command) {
+//                 pending_shell_commands++;  // Track shell commands separately
+//             }
+            
+//             // Set up timeout for receiving data based on command type
+//             struct timeval tv;
+//             if (is_program_command) {
+//                 // Demo/program commands: 30 seconds timeout (handles scheduling delays)
+//                 tv.tv_sec = 30;
+//                 tv.tv_usec = 0;
+//             } else {
+//                 // Shell commands: 300ms timeout (should respond quickly)
+//                 tv.tv_sec = 0;
+//                 tv.tv_usec = 300000;
+//             }
+//             setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+//         }
+        
+//         // Receive and display output until we get <<END>> for all pending commands
+//         // This handles the case where multiple commands are sent in quick succession
+//         while (pending_commands > 0) {
+//             memset(response, 0, sizeof(response));
+//             bytes_received = recv(socket_fd, response, sizeof(response) - 1, 0);
+            
+//             if (bytes_received > 0) {
+//                 // Got more data
+//                 response[bytes_received] = '\0';
+                
+//                 // Check for end-of-task marker
+//                 char* marker_pos = strstr(response, "<<END>>");
+//                 if (marker_pos != NULL) {
+//                     // Remove the marker from output
+//                     *marker_pos = '\0';  // Truncate at marker
+//                     if (strlen(response) > 0) {
+//                         printf("%s", response);
+//                         fflush(stdout);  // Flush immediately
+//                     }
+//                     // One command completed (program command)
+//                     pending_commands--;
+//                 } else {
+//                     // Normal output, display it
+//                     printf("%s", response);
+//                     fflush(stdout);  // Flush immediately to ensure output is displayed
+//                 }
+//             } else if (bytes_received == 0) {
+//                 // Server closed connection
+//                 print_connection_lost_error();
+//                 return;
+//             } else if (bytes_received == -1) {
+//                 // Error occurred during receive
+//                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
+//                     // Timeout - no more data for now
+//                     // For shell commands, if we got a timeout after receiving output,
+//                     // assume the command is complete (shell commands don't send <<END>>)
+//                     if (pending_shell_commands > 0) {
+//                         // Shell command completed (timeout after output means done)
+//                         pending_shell_commands--;
+//                         pending_commands--;
+//                     } else if (pending_commands > 0) {
+//                         // Program command still pending - reset timeout and continue
+//                         struct timeval tv;
+//                         tv.tv_sec = 30;
+//                         tv.tv_usec = 0;
+//                         setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+//                     }
+//                     break;
+//                 } else {
+//                     // Real error (not just a timeout)
+//                     perror("Error: Failed to receive response from server");
+//                     print_connection_lost_error();
+//                     return;
+//                 }
+//             }
+//         }
+        
+//         // Clear timeout when no pending commands
+//         if (pending_commands == 0) {
+//             pending_shell_commands = 0;  // Reset shell command counter
+//             struct timeval tv;
+//             tv.tv_sec = 0;
+//             tv.tv_usec = 0;
+//             setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+//         }
+//     }
+// }
+
+// Main client loop
+// Presents shell prompt, reads user commands, sends to server, displays output
+// Continues until user types "exit" or connection is lost
+// Parameters:
+//   socket_fd - Socket file descriptor for server connection
 void run_client_loop(int socket_fd) {
     char command[BUFFER_SIZE];    // Buffer for user input
     char response[BUFFER_SIZE];   // Buffer for server response
     ssize_t bytes_received;
-    int pending_commands = 0;     // Track how many commands we're waiting for completion
-    int pending_shell_commands = 0;  // Track how many shell commands are pending (don't send <<END>>)
     
-    // main command loop - runs indefinitely until exit or disconnect
+    // Main command loop - runs indefinitely until exit or disconnect
     while (1) {
-        // Only prompt for input if we don't have pending commands
-        // If we have pending commands, continue receiving their output
-        if (pending_commands == 0) {
-            // display shell prompt - CHANGED TO >>> to match assignment
-            printf(">>> ");
-            fflush(stdout);
-            
-            // read command from user input
-            if (fgets(command, sizeof(command), stdin) == NULL) {
-                const char* exit_cmd = "exit\n";
-                send(socket_fd, exit_cmd, strlen(exit_cmd), 0);
-                break;
-            }
-            
-            // check if command is empty or only whitespace
-            if (is_empty_or_whitespace(command)) {
-                continue;
-            }
-            
-            // send command to server
-            ssize_t bytes_sent = send(socket_fd, command, strlen(command), 0);
-            if (bytes_sent == -1) {
-                perror("Error: Failed to send command to server");
-                print_connection_lost_error();
-                break;
-            }
-            
-            // check if user wants to exit
-            if (strncmp(command, "exit", 4) == 0) {
-                recv(socket_fd, response, sizeof(response) - 1, 0);
-                break;
-            }
-            
-            // Determine if this is a program command (demo/program) or shell command
-            bool is_program_command = (strncmp(command, "./demo", 6) == 0 || 
-                                       strncmp(command, "demo", 4) == 0 ||
-                                       strncmp(command, "program", 7) == 0);
-            
-            // Increment pending commands counter
-            pending_commands++;
-            if (!is_program_command) {
-                pending_shell_commands++;  // Track shell commands separately
-            }
-            
-            // Set up timeout for receiving data based on command type
-            struct timeval tv;
-            if (is_program_command) {
-                // Demo/program commands: 30 seconds timeout (handles scheduling delays)
-                tv.tv_sec = 30;
-                tv.tv_usec = 0;
-            } else {
-                // Shell commands: 300ms timeout (should respond quickly)
-                tv.tv_sec = 0;
-                tv.tv_usec = 300000;
-            }
-            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        // Display shell prompt
+        printf(">>> ");
+        fflush(stdout);
+        
+        // Read command from user input
+        if (fgets(command, sizeof(command), stdin) == NULL) {
+            // EOF (Ctrl+D) - send exit and break
+            const char* exit_cmd = "exit\n";
+            send(socket_fd, exit_cmd, strlen(exit_cmd), 0);
+            break;
         }
         
-        // Receive and display output until we get <<END>> for all pending commands
-        // This handles the case where multiple commands are sent in quick succession
-        while (pending_commands > 0) {
+        // Check if command is empty or only whitespace
+        if (is_empty_or_whitespace(command)) {
+            continue;
+        }
+        
+        // Send command to server
+        ssize_t bytes_sent = send(socket_fd, command, strlen(command), 0);
+        if (bytes_sent == -1) {
+            perror("Error: Failed to send command to server");
+            print_connection_lost_error();
+            break;
+        }
+        
+        // Check if user wants to exit
+        if (strncmp(command, "exit", 4) == 0) {
+            recv(socket_fd, response, sizeof(response) - 1, 0);
+            break;
+        }
+        
+        // Determine if this is a program command (demo/program) or shell command
+        bool is_program_command = (strncmp(command, "./demo", 6) == 0 || 
+                                   strncmp(command, "demo", 4) == 0 ||
+                                   strncmp(command, "program", 7) == 0);
+        
+        // For program commands, we expect incremental output followed by <<END>> marker
+        // For shell commands, we expect immediate output (no marker)
+        bool expecting_end_marker = is_program_command;
+        
+        // Set timeout based on command type
+        struct timeval tv;
+        if (is_program_command) {
+            // Program commands: longer timeout to handle scheduling delays
+            // Tasks can be preempted and resumed, so we need patience
+            tv.tv_sec = 300;  // 5 minutes should be enough for any reasonable task
+            tv.tv_usec = 0;
+        } else {
+            // Shell commands: shorter timeout (they execute immediately)
+            tv.tv_sec = 10;
+            tv.tv_usec = 0;
+        }
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        
+        // Receive and display output from server
+        while (1) {
             memset(response, 0, sizeof(response));
             bytes_received = recv(socket_fd, response, sizeof(response) - 1, 0);
             
             if (bytes_received > 0) {
-                // Got more data
+                // Got data from server
                 response[bytes_received] = '\0';
                 
-                // Check for end-of-task marker
-                char* marker_pos = strstr(response, "<<END>>");
-                if (marker_pos != NULL) {
-                    // Remove the marker from output
-                    *marker_pos = '\0';  // Truncate at marker
-                    if (strlen(response) > 0) {
-                        printf("%s", response);
-                        fflush(stdout);  // Flush immediately
+                // Check for end-of-task marker (only for program commands)
+                if (expecting_end_marker) {
+                    char* marker_pos = strstr(response, "<<END>>");
+                    if (marker_pos != NULL) {
+                        // Found end marker - remove it from output
+                        *marker_pos = '\0';
+                        if (strlen(response) > 0) {
+                            printf("%s", response);
+                            fflush(stdout);
+                        }
+                        // Task complete, stop receiving
+                        break;
                     }
-                    // One command completed (program command)
-                    pending_commands--;
-                } else {
-                    // Normal output, display it
-                    printf("%s", response);
-                    fflush(stdout);  // Flush immediately to ensure output is displayed
+                }
+                
+                // Normal output - display it
+                printf("%s", response);
+                fflush(stdout);
+                
+                // For shell commands (no end marker expected), check if output seems complete
+                // Shell commands typically send all output at once
+                if (!expecting_end_marker) {
+                    // Wait a short time to see if more data arrives
+                    struct timeval short_tv;
+                    short_tv.tv_sec = 0;
+                    short_tv.tv_usec = 100000;  // 100ms
+                    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
+                    
+                    // Try one more recv to see if there's more data
+                    char peek_buffer[BUFFER_SIZE];
+                    ssize_t peek_bytes = recv(socket_fd, peek_buffer, sizeof(peek_buffer) - 1, 0);
+                    
+                    if (peek_bytes > 0) {
+                        // More data arrived, display it
+                        peek_buffer[peek_bytes] = '\0';
+                        printf("%s", peek_buffer);
+                        fflush(stdout);
+                        // Continue loop to check for more
+                        tv.tv_sec = 10;
+                        tv.tv_usec = 0;
+                        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                    } else {
+                        // No more data (timeout or error), shell command is done
+                        break;
+                    }
                 }
             } else if (bytes_received == 0) {
                 // Server closed connection
                 print_connection_lost_error();
                 return;
-            } else if (bytes_received == -1) {
+            } else {
                 // Error occurred during receive
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // Timeout - no more data for now
-                    // For shell commands, if we got a timeout after receiving output,
-                    // assume the command is complete (shell commands don't send <<END>>)
-                    if (pending_shell_commands > 0) {
-                        // Shell command completed (timeout after output means done)
-                        pending_shell_commands--;
-                        pending_commands--;
-                    } else if (pending_commands > 0) {
-                        // Program command still pending - reset timeout and continue
-                        struct timeval tv;
-                        tv.tv_sec = 30;
-                        tv.tv_usec = 0;
-                        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                    // Timeout - no more data available
+                    if (expecting_end_marker) {
+                        // For program commands, timeout means something went wrong
+                        // This shouldn't happen with 5-minute timeout unless server crashed
+                        fprintf(stderr, "Error: Timeout waiting for task completion (server may have crashed)\n");
                     }
+                    // Done receiving for this command
                     break;
                 } else {
                     // Real error (not just a timeout)
@@ -251,16 +407,15 @@ void run_client_loop(int socket_fd) {
             }
         }
         
-        // Clear timeout when no pending commands
-        if (pending_commands == 0) {
-            pending_shell_commands = 0;  // Reset shell command counter
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 0;
-            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        }
+        // Clear timeout for next command (blocking mode)
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
 }
+
+
+
 
 // Utility function to check if string is empty or contains only whitespace
 // Parameters:

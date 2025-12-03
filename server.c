@@ -1041,6 +1041,87 @@ static int buffer_demo_output(scheduler_task_t* task) {
 // Uses different quantum sizes for first round vs subsequent rounds
 // Parameters:
 //   task - Program task to execute
+// static void run_program_task(scheduler_task_t* task) {
+//     // Determine time quantum: first round uses smaller quantum, later rounds use larger
+//     int quantum = (task->rounds_completed == 0) ? FIRST_ROUND_QUANTUM : NEXT_ROUND_QUANTUM;
+//     // Actual slice is minimum of quantum and remaining time
+//     int slice = (task->remaining_time < quantum) ? task->remaining_time : quantum;
+    
+//     printf(COLOR_GREEN "(%d)---- running (%d)" COLOR_RESET "\n", task->client->client_id, slice);
+//     fflush(stdout);
+    
+//     if (task->type == TASK_PROGRAM_DEMO) {
+//         // Demo task: buffer output if not already done, then send lines incrementally
+//         if (task->output_lines == NULL) {
+//             if (buffer_demo_output(task) != 0) {
+//                 task->cancelled = true;
+//                 send_string(task->client, "Error: Failed to execute demo\n");
+//                 return;
+//             }
+//         }
+        
+//         // Send 'slice' number of output lines to client
+//         int lines_to_send = slice;
+//         int lines_sent_this_round = 0;
+        
+//         while (lines_sent_this_round < lines_to_send && task->lines_sent < task->total_output_lines) {
+//             // Check if client is still connected
+//             if (!client_context_is_connected(task->client)) {
+//                 task->cancelled = true;
+//                 return;
+//             }
+            
+//             // Send one line of output
+//             if (send_string(task->client, task->output_lines[task->lines_sent]) == -1) {
+//                 task->cancelled = true;
+//                 return;
+//             }
+            
+//             // Update task state
+//             task->lines_sent++;
+//             task->iterations_completed++;
+//             task->remaining_time--;
+//             lines_sent_this_round++;
+            
+//             // Simulate work by sleeping 1 second per iteration
+//             sleep(1);
+//         }
+//     } else if (task->type == TASK_PROGRAM_GENERIC) {
+//         // Generic program task: send formatted iteration messages
+//         for (int i = 0; i < slice; ++i) {
+//             // Check if client is still connected
+//             if (!client_context_is_connected(task->client)) {
+//                 task->cancelled = true;
+//                 break;
+//             }
+            
+//             // Update task state
+//             task->iterations_completed++;
+//             task->remaining_time--;
+            
+//             // Send iteration message to client
+//             if (send_formatted(task->client,
+//                 "[%s] iteration %d/%d\n",
+//                 task->label,
+//                 task->iterations_completed,
+//                 task->total_burst_time) == -1) {
+//                 task->cancelled = true;
+//                 break;
+//             }
+//             // Simulate work by sleeping 1 second per iteration
+//             sleep(1);
+//         }
+//     }
+    
+//     // Increment round counter
+//     task->rounds_completed++;
+// }
+
+
+// Execute a program task for one time quantum
+// Uses different quantum sizes for first round vs subsequent rounds
+// Parameters:
+//   task - Program task to execute
 static void run_program_task(scheduler_task_t* task) {
     // Determine time quantum: first round uses smaller quantum, later rounds use larger
     int quantum = (task->rounds_completed == 0) ? FIRST_ROUND_QUANTUM : NEXT_ROUND_QUANTUM;
@@ -1051,39 +1132,30 @@ static void run_program_task(scheduler_task_t* task) {
     fflush(stdout);
     
     if (task->type == TASK_PROGRAM_DEMO) {
-        // Demo task: buffer output if not already done, then send lines incrementally
-        if (task->output_lines == NULL) {
-            if (buffer_demo_output(task) != 0) {
-                task->cancelled = true;
-                send_string(task->client, "Error: Failed to execute demo\n");
-                return;
-            }
-        }
-        
-        // Send 'slice' number of output lines to client
-        int lines_to_send = slice;
-        int lines_sent_this_round = 0;
-        
-        while (lines_sent_this_round < lines_to_send && task->lines_sent < task->total_output_lines) {
-            // Check if client is still connected
+        // Demo task: generate and send output iteratively (one line per second)
+        // This allows true preemptive scheduling where output is interleaved with other tasks
+        for (int i = 0; i < slice; i++) {
+            // Check if client is still connected before each iteration
             if (!client_context_is_connected(task->client)) {
                 task->cancelled = true;
                 return;
             }
             
-            // Send one line of output
-            if (send_string(task->client, task->output_lines[task->lines_sent]) == -1) {
+            // Update task state
+            task->iterations_completed++;
+            task->remaining_time--;
+            
+            // Generate and send one line of output
+            // Format matches demo.c output: "Demo X/N"
+            if (send_formatted(task->client, "Demo %d/%d\n", 
+                             task->iterations_completed, 
+                             task->total_burst_time) == -1) {
                 task->cancelled = true;
                 return;
             }
             
-            // Update task state
-            task->lines_sent++;
-            task->iterations_completed++;
-            task->remaining_time--;
-            lines_sent_this_round++;
-            
             // Simulate work by sleeping 1 second per iteration
+            // This makes the scheduling behavior visible
             sleep(1);
         }
     } else if (task->type == TASK_PROGRAM_GENERIC) {
@@ -1116,6 +1188,12 @@ static void run_program_task(scheduler_task_t* task) {
     // Increment round counter
     task->rounds_completed++;
 }
+
+
+
+
+
+
 
 // Execute a program and capture its output, sending it incrementally to client
 // This function is currently unused but kept for potential future use
